@@ -3,7 +3,11 @@ SHELL := /bin/bash
 COMPOSE := docker compose
 ENV_FILE := .env
 
-# По умолчанию (можно переопределить: make ufw POSTGRES_PORT=...)
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
 POSTGRES_PORT ?= 55432
 
 .PHONY: help check-env env up down restart ps logs postgres-logs minio-logs nginx-logs \
@@ -88,9 +92,6 @@ clean: check-env
 	$(COMPOSE) down -v
 	rm -rf ./data ./certbot
 
-# Firewall:
-# - 80/443 открыты всем (нужно для HTTPS и Let's Encrypt)
-# - Postgres порт открыт только для сервера приложения (APP_IP)
 ufw:
 	@if [ -z "$(APP_IP)" ]; then \
 		echo "Нужно указать APP_IP. Пример: make ufw APP_IP=1.2.3.4"; \
@@ -107,15 +108,13 @@ ufw:
 ufw-status:
 	sudo ufw status verbose
 
-# TLS (Let's Encrypt) через certbot container
-# Требует, чтобы nginx уже слушал 80 и отдавал /.well-known/acme-challenge/
 tls-issue: check-env
 	@echo "Выпускаю сертификат для $${S3_DOMAIN}..."
 	$(COMPOSE) up -d nginx
 	$(COMPOSE) run --rm --entrypoint certbot certbot certonly \
 	  --webroot -w /var/www/certbot \
-	  -d $${S3_DOMAIN} \
-	  --email $${LETSENCRYPT_EMAIL} \
+	  -d "$${S3_DOMAIN}" \
+	  --email "$${LETSENCRYPT_EMAIL}" \
 	  --agree-tos --no-eff-email
 	$(MAKE) nginx-reload
 
