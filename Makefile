@@ -112,7 +112,7 @@ ufw-status:
 tls-issue: check-env
 	@echo "Выпускаю сертификат для $${S3_DOMAIN}..."
 	$(COMPOSE) up -d nginx
-	$(COMPOSE) run --rm certbot certonly \
+	$(COMPOSE) run --rm --entrypoint certbot certbot certonly \
 	  --webroot -w /var/www/certbot \
 	  -d $${S3_DOMAIN} \
 	  --email $${LETSENCRYPT_EMAIL} \
@@ -120,7 +120,7 @@ tls-issue: check-env
 	$(MAKE) nginx-reload
 
 tls-renew: check-env
-	$(COMPOSE) run --rm certbot renew
+	$(COMPOSE) run --rm --entrypoint certbot certbot renew
 	$(MAKE) nginx-reload
 
 nginx-reload:
