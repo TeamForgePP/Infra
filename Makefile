@@ -3,30 +3,32 @@ SHELL := /bin/bash
 COMPOSE := docker compose
 ENV_FILE := .env
 
-# Порты по умолчанию (можно переопределять при вызове make)
+# По умолчанию (можно переопределить: make ufw POSTGRES_PORT=...)
 POSTGRES_PORT ?= 55432
-MINIO_API_PORT ?= 9000
-MINIO_CONSOLE_PORT ?= 9001
 
-.PHONY: help check-env env up down restart ps logs postgres-logs minio-logs init reinit pull clean ufw ufw-status
+.PHONY: help check-env env up down restart ps logs postgres-logs minio-logs nginx-logs \
+        init reinit pull clean ufw ufw-status tls-issue tls-renew nginx-reload
 
 help:
 	@echo ""
 	@echo "Targets:"
-	@echo "  make env               -> создать .env из .env.example (если нет)"
-	@echo "  make up                -> поднять Postgres + MinIO (+ init бакетов)"
-	@echo "  make down              -> остановить"
-	@echo "  make restart           -> перезапуск"
-	@echo "  make ps                -> статус контейнеров"
-	@echo "  make logs              -> логи всех сервисов"
-	@echo "  make postgres-logs      -> логи postgres"
-	@echo "  make minio-logs         -> логи minio"
-	@echo "  make init              -> выполнить minio-init (создать бакеты/права)"
-	@echo "  make reinit             -> пересоздать minio-init и прогнать заново"
-	@echo "  make pull              -> обновить образы"
-	@echo "  make clean             -> ОПАСНО: удалить volumes (данные postgres/minio)"
-	@echo "  make ufw APP_IP=x.x.x.x -> открыть доступ только для второго сервера"
-	@echo "  make ufw-status         -> показать ufw status"
+	@echo "  make env                 -> создать .env из .env.example (если нет)"
+	@echo "  make up                  -> поднять Postgres + MinIO + Nginx (+ init бакетов)"
+	@echo "  make down                -> остановить"
+	@echo "  make restart             -> перезапуск"
+	@echo "  make ps                  -> статус контейнеров"
+	@echo "  make logs                -> логи всех сервисов"
+	@echo "  make postgres-logs        -> логи postgres"
+	@echo "  make minio-logs           -> логи minio"
+	@echo "  make nginx-logs           -> логи nginx"
+	@echo "  make init                -> выполнить minio-init (создать бакеты/права)"
+	@echo "  make reinit              -> пересоздать minio-init и прогнать заново"
+	@echo "  make tls-issue           -> выпустить сертификат Let's Encrypt для $$S3_DOMAIN"
+	@echo "  make tls-renew           -> обновить сертификаты"
+	@echo "  make ufw APP_IP=x.x.x.x  -> открыть доступ: 80/443 всем, Postgres только для APP_IP"
+	@echo "  make ufw-status          -> показать ufw status"
+	@echo "  make pull                -> обновить образы"
+	@echo "  make clean FORCE=1       -> ОПАСНО: удалить volumes (данные postgres/minio/certs)"
 	@echo ""
 
 check-env:
@@ -40,7 +42,7 @@ env:
 		echo ".env уже существует — не трогаю"; \
 	else \
 		cp .env.example .env; \
-		echo "Создал .env из .env.example. Открой и заполни пароли."; \
+		echo "Создал .env из .env.example. Открой и заполни пароли/домены."; \
 	fi
 
 up: check-env
@@ -65,6 +67,9 @@ postgres-logs: check-env
 minio-logs: check-env
 	$(COMPOSE) logs -f --tail=200 minio
 
+nginx-logs: check-env
+	$(COMPOSE) logs -f --tail=200 nginx
+
 init: check-env
 	$(COMPOSE) up -d minio
 	$(COMPOSE) up --no-deps --force-recreate minio-init
@@ -81,21 +86,42 @@ clean: check-env
 	@echo "Если уверен: запусти -> make clean FORCE=1"
 	@if [ "$(FORCE)" != "1" ]; then exit 1; fi
 	$(COMPOSE) down -v
-	rm -rf ./data
+	rm -rf ./data ./certbot
 
-# Firewall: открыть доступ к Postgres и MinIO API только для второго сервера
-# Использование: make ufw APP_IP=1.2.3.4 POSTGRES_PORT=55432
+# Firewall:
+# - 80/443 открыты всем (нужно для HTTPS и Let's Encrypt)
+# - Postgres порт открыт только для сервера приложения (APP_IP)
 ufw:
 	@if [ -z "$(APP_IP)" ]; then \
 		echo "Нужно указать APP_IP. Пример: make ufw APP_IP=1.2.3.4"; \
 		exit 1; \
 	fi
 	sudo ufw allow OpenSSH
+	sudo ufw allow 80/tcp
+	sudo ufw allow 443/tcp
 	sudo ufw allow from "$(APP_IP)" to any port "$(POSTGRES_PORT)" proto tcp
-	sudo ufw allow from "$(APP_IP)" to any port "$(MINIO_API_PORT)" proto tcp
-	@echo "MinIO console (9001) я НЕ открываю намеренно."
+	@echo "MinIO порты (9000/9001) наружу НЕ открываем — доступ только через nginx."
 	sudo ufw --force enable
 	sudo ufw status verbose
 
 ufw-status:
 	sudo ufw status verbose
+
+# TLS (Let's Encrypt) через certbot container
+# Требует, чтобы nginx уже слушал 80 и отдавал /.well-known/acme-challenge/
+tls-issue: check-env
+	@echo "Выпускаю сертификат для $${S3_DOMAIN}..."
+	$(COMPOSE) up -d nginx
+	$(COMPOSE) run --rm certbot certonly \
+	  --webroot -w /var/www/certbot \
+	  -d $${S3_DOMAIN} \
+	  --email $${LETSENCRYPT_EMAIL} \
+	  --agree-tos --no-eff-email
+	$(MAKE) nginx-reload
+
+tls-renew: check-env
+	$(COMPOSE) run --rm certbot renew
+	$(MAKE) nginx-reload
+
+nginx-reload:
+	@docker exec storage-nginx nginx -s reload || true
