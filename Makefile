@@ -109,11 +109,12 @@ ufw-status:
 	sudo ufw status verbose
 
 tls-issue: check-env
-	@echo "Выпускаю сертификат для $${S3_DOMAIN}..."
+	@echo "Выпускаю сертификаты для $${S3_DOMAIN} и $${MINIO_DOMAIN}..."
 	$(COMPOSE) up -d nginx
 	$(COMPOSE) run --rm --entrypoint certbot certbot certonly \
 	  --webroot -w /var/www/certbot \
 	  -d "$${S3_DOMAIN}" \
+	  -d "$${MINIO_DOMAIN}" \
 	  --email "$${LETSENCRYPT_EMAIL}" \
 	  --agree-tos --no-eff-email
 	$(MAKE) nginx-reload

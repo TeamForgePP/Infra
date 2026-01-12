@@ -28,9 +28,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_REGION: ${MINIO_REGION}
-
-      MINIO_SERVER_URL: https://${S3_DOMAIN}
-      MINIO_BROWSER_REDIRECT_URL: https://${S3_DOMAIN}/admin
     volumes:
       - ./data/minio:/data
     healthcheck:
@@ -40,7 +37,7 @@ services:
       retries: 30
 
   minio-init:
-    image: minio/mc:RELEASE.2025-07-21T05-28-08Z
+    image: minio/mc:RELEASE.2025-09-07T16-13-09Z
     container_name: storage-minio-init
     depends_on:
       minio:
@@ -63,14 +60,9 @@ services:
       - "443:443"
     env_file: ./.env
     volumes:
-      - ./nginx/conf.d:/etc/nginx/templates:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/www:/var/www/certbot
       - ./certbot:/etc/letsencrypt
-    command: >
-      /bin/sh -c "
-      envsubst '$$S3_DOMAIN' < /etc/nginx/templates/s3.conf > /etc/nginx/conf.d/default.conf
-      && nginx -g 'daemon off;'
-      "
 
   certbot:
     image: certbot/certbot:v2.11.0
