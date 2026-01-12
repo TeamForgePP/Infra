@@ -49,6 +49,20 @@ services:
       - ./minio/init:/init:ro
     restart: "no"
 
+  nginx-dev:
+    image: nginx:1.27-alpine
+    container_name: storage-nginx-dev
+    restart: unless-stopped
+    depends_on:
+      - minio
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/conf.d/dev.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/www:/var/www/certbot
+      - ./certbot:/etc/letsencrypt
+    profiles: ["dev"]
+
   nginx:
     image: nginx:1.27-alpine
     container_name: storage-nginx
@@ -58,11 +72,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    env_file: ./.env
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/conf.d/prod.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/www:/var/www/certbot
       - ./certbot:/etc/letsencrypt
+    profiles: ["prod"]
 
   certbot:
     image: certbot/certbot:v2.11.0

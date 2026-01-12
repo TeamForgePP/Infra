@@ -10,29 +10,32 @@ endif
 
 POSTGRES_PORT ?= 55432
 
-.PHONY: help check-env env up down restart ps logs postgres-logs minio-logs nginx-logs \
-        init reinit pull clean ufw ufw-status tls-issue tls-renew nginx-reload
+.PHONY: help check-env env \
+        dev dev-down dev-restart dev-ps dev-logs dev-nginx-logs \
+        up down restart ps logs postgres-logs minio-logs nginx-logs \
+        init reinit pull clean ufw ufw-status \
+        tls-issue tls-renew nginx-reload
 
 help:
 	@echo ""
 	@echo "Targets:"
-	@echo "  make env                 -> создать .env из .env.example (если нет)"
-	@echo "  make up                  -> поднять Postgres + MinIO + Nginx (+ init бакетов)"
-	@echo "  make down                -> остановить"
-	@echo "  make restart             -> перезапуск"
-	@echo "  make ps                  -> статус контейнеров"
-	@echo "  make logs                -> логи всех сервисов"
-	@echo "  make postgres-logs        -> логи postgres"
-	@echo "  make minio-logs           -> логи minio"
-	@echo "  make nginx-logs           -> логи nginx"
-	@echo "  make init                -> выполнить minio-init (создать бакеты/права)"
-	@echo "  make reinit              -> пересоздать minio-init и прогнать заново"
-	@echo "  make tls-issue           -> выпустить сертификат Let's Encrypt для $$S3_DOMAIN"
-	@echo "  make tls-renew           -> обновить сертификаты"
-	@echo "  make ufw APP_IP=x.x.x.x  -> открыть доступ: 80/443 всем, Postgres только для APP_IP"
-	@echo "  make ufw-status          -> показать ufw status"
-	@echo "  make pull                -> обновить образы"
-	@echo "  make clean FORCE=1       -> ОПАСНО: удалить volumes (данные postgres/minio/certs)"
+	@echo "  make env                    -> создать .env из .env.example (если нет)"
+	@echo ""
+	@echo "DEV (без SSL, только 80):"
+	@echo "  make dev                    -> поднять Postgres + MinIO + Nginx(80)"
+	@echo "  make dev-down               -> остановить dev"
+	@echo "  make dev-restart            -> перезапуск dev"
+	@echo "  make dev-logs               -> логи dev"
+	@echo ""
+	@echo "PROD (SSL, 80->443):"
+	@echo "  make tls-issue              -> выпустить сертификаты для $$S3_DOMAIN и $$MINIO_DOMAIN (нужен make dev)"
+	@echo "  make up                     -> поднять прод (Nginx 80/443 + SSL)"
+	@echo "  make down                   -> остановить прод"
+	@echo "  make restart                -> перезапуск прод"
+	@echo ""
+	@echo "Utils:"
+	@echo "  make ufw APP_IP=x.x.x.x     -> открыть 80/443 всем, Postgres только для APP_IP"
+	@echo "  make clean FORCE=1          -> ОПАСНО: удалить volumes (данные postgres/minio/certs)"
 	@echo ""
 
 check-env:
@@ -49,15 +52,44 @@ env:
 		echo "Создал .env из .env.example. Открой и заполни пароли/домены."; \
 	fi
 
+# ---------- DEV ----------
+dev: check-env
+	$(COMPOSE) up -d postgres minio nginx-dev
+	$(MAKE) init
+
+dev-down: check-env
+	$(COMPOSE) down
+
+dev-restart: check-env
+	$(COMPOSE) down
+	$(COMPOSE) up -d postgres minio nginx-dev
+	$(MAKE) init
+
+dev-ps: check-env
+	$(COMPOSE) ps
+
+dev-logs: check-env
+	$(COMPOSE) logs -f --tail=200
+
+dev-nginx-logs: check-env
+	$(COMPOSE) logs -f --tail=200 nginx-dev
+
+# ---------- PROD ----------
 up: check-env
-	$(COMPOSE) up -d
+	@if [ ! -f "./certbot/live/$${S3_DOMAIN}/fullchain.pem" ]; then \
+		echo "Нет сертификата ./certbot/live/$${S3_DOMAIN}/fullchain.pem"; \
+		echo "Сделай: make dev && make tls-issue && make up"; \
+		exit 1; \
+	fi
+	$(COMPOSE) up -d postgres minio nginx
+	$(MAKE) init
 
 down: check-env
 	$(COMPOSE) down
 
 restart: check-env
 	$(COMPOSE) down
-	$(COMPOSE) up -d
+	$(MAKE) up
 
 ps: check-env
 	$(COMPOSE) ps
@@ -74,6 +106,7 @@ minio-logs: check-env
 nginx-logs: check-env
 	$(COMPOSE) logs -f --tail=200 nginx
 
+# ---------- INIT ----------
 init: check-env
 	$(COMPOSE) up -d minio
 	$(COMPOSE) up --no-deps --force-recreate minio-init
@@ -108,16 +141,19 @@ ufw:
 ufw-status:
 	sudo ufw status verbose
 
+# ВАЖНО: certbot может проверить домены ТОЛЬКО по 80 (http).
+# Поэтому: сначала make dev (nginx-dev на 80), потом make tls-issue.
 tls-issue: check-env
+	@echo "Сначала убедись, что работает make dev (nginx-dev слушает 80)."
 	@echo "Выпускаю сертификаты для $${S3_DOMAIN} и $${MINIO_DOMAIN}..."
-	$(COMPOSE) up -d nginx
+	$(COMPOSE) up -d nginx-dev
 	$(COMPOSE) run --rm --entrypoint certbot certbot certonly \
 	  --webroot -w /var/www/certbot \
 	  -d "$${S3_DOMAIN}" \
 	  -d "$${MINIO_DOMAIN}" \
 	  --email "$${LETSENCRYPT_EMAIL}" \
-	  --agree-tos --no-eff-email
-	$(MAKE) nginx-reload
+	  --agree-tos --no-eff-email --non-interactive
+	@echo "Готово. Теперь: make up"
 
 tls-renew: check-env
 	$(COMPOSE) run --rm --entrypoint certbot certbot renew
