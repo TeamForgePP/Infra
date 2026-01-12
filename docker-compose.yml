@@ -19,7 +19,7 @@ services:
       retries: 30
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: storage-minio
     restart: unless-stopped
     env_file: ./.env
@@ -28,7 +28,9 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_REGION: ${MINIO_REGION}
-    # ВАЖНО: наружу порты не публикуем — доступ только через nginx
+
+      MINIO_SERVER_URL: https://${S3_DOMAIN}
+      MINIO_BROWSER_REDIRECT_URL: https://${S3_DOMAIN}/admin
     volumes:
       - ./data/minio:/data
     healthcheck:
@@ -37,9 +39,8 @@ services:
       timeout: 3s
       retries: 30
 
-  # создаёт бакеты и (опционально) делает public бакет доступным на чтение
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-07-21T05-28-08Z
     container_name: storage-minio-init
     depends_on:
       minio:
@@ -51,9 +52,8 @@ services:
       - ./minio/init:/init:ro
     restart: "no"
 
-  # NGINX reverse proxy (80/443 наружу)
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     container_name: storage-nginx
     restart: unless-stopped
     depends_on:
@@ -72,9 +72,8 @@ services:
       && nginx -g 'daemon off;'
       "
 
-  # Certbot контейнер (сертификаты и renew)
   certbot:
-    image: certbot/certbot:latest
+    image: certbot/certbot:v2.11.0
     container_name: storage-certbot
     volumes:
       - ./certbot:/etc/letsencrypt
